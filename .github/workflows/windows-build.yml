@@ -30,7 +30,7 @@ jobs:
         shell: pwsh
         run: >
           pyinstaller
-          --name "注销风险监测器"
+          --name "TaxApp"
           --onefile
           --windowed
           --icon assets\icon.ico
@@ -39,5 +39,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 注销风险监测器-exe
-          path: dist/注销风险监测器.exe
+          name: TaxApp
+          path: dist/TaxApp.exe

@@ -1,0 +1,43 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tax_benefit_app.py"
+      - "assets/**"
+      - ".github/workflows/windows-build.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Use Python 3.13 (install pre-release PyInstaller) — or switch to 3.12 for max stability
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install --pre pyinstaller
+
+      - name: Build EXE with PyInstaller (onefile, GUI)
+        shell: pwsh
+        run: >
+          pyinstaller
+          --name "注销风险监测器"
+          --onefile
+          --windowed
+          --icon assets\icon.ico
+          tax_benefit_app.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 注销风险监测器-exe
+          path: dist/注销风险监测器.exe

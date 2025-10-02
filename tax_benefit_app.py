@@ -32,11 +32,11 @@ class TaxBenefitApp:
         self.root_container.grid_rowconfigure(1, weight=0)
         self.root_container.grid_columnconfigure(0, weight=1)
 
-        # 内容区（用 pack 布局，不与 root 混用）
+        # 内容区
         self.main_frame = tk.Frame(self.root_container, bg='white', padx=20, pady=20, relief=tk.RAISED, bd=2)
         self.main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 0))
 
-        # 固定底部按钮区（单独一行）
+        # 固定底部按钮区
         self.footer_frame = tk.Frame(self.root_container, bg='white', padx=10, pady=10, relief=tk.GROOVE, bd=1)
         self.footer_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
 
@@ -47,7 +47,7 @@ class TaxBenefitApp:
 
         # 界面
         self.create_widgets()
-        self.create_buttons_section()  # 渲染在 footer_frame
+        self.create_buttons_section()
 
         # 置顶闪现
         self.root.lift()
@@ -101,10 +101,11 @@ class TaxBenefitApp:
         style = ttk.Style()
         style.configure("White.TCombobox", foreground='black', fieldbackground='white', background='white')
 
+        # 需求 1：将“年度”改为“期间”；需求增加：加入“生活服务”等服务业枚举
         fields = [
             {"name": "主营行业 (A)", "key": "A_主营行业", "type": "select",
-             "choices": ["批发零售", "制造", "建筑安装", "交通运输", "其他"]},
-            {"name": "年度 (B)", "key": "B_年度", "type": "number"},
+             "choices": ["批发零售", "制造", "建筑安装", "交通运输", "生活服务", "其他"]},
+            {"name": "期间 (B)", "key": "B_期间", "type": "text"},
             {"name": "营业收入 (C)", "key": "C_营业收入", "type": "number"},
             {"name": "销售收入 (D)", "key": "D_销售收入", "type": "number"},
             {"name": "成本 (E)", "key": "E_成本", "type": "number"},
@@ -117,6 +118,11 @@ class TaxBenefitApp:
             {"name": "当期开票额度 (L)", "key": "L_当期开票额度", "type": "number"},
             {"name": "当期受票额度 (M)", "key": "M_当期受票额度", "type": "number"},
             {"name": "印花税计税依据 (N)", "key": "N_印花税计税依据", "type": "number"},
+            # 新增 4 个字段（与 Excel 对应）
+            {"name": "简易计税销售额 (O)", "key": "O_简易计税销售额", "type": "number"},
+            {"name": "免税销售额 (P)", "key": "P_免税销售额", "type": "number"},
+            {"name": "进项税额 (Q)", "key": "Q_进项税额", "type": "number"},
+            {"name": "进项税额转出 (R)", "key": "R_进项税额转出", "type": "number"},
         ]
 
         left = tk.Frame(block, bg='white'); right = tk.Frame(block, bg='white')
@@ -139,12 +145,19 @@ class TaxBenefitApp:
                     cb.pack(side=tk.LEFT, padx=6)
                     cb.set(f["choices"][0])
                     self.rule_inputs[f["key"]] = cb
-                else:
+                elif f["type"] == "number":
                     ent = tk.Entry(row, font=('Arial', 11), width=25,
                                    relief=tk.SUNKEN, bd=2, justify='center',
                                    fg='black', bg='white', insertbackground='black')
                     ent.pack(side=tk.LEFT, padx=6)
                     ent.bind('<KeyRelease>', self._rule_number_hint)
+                    self.rule_inputs[f["key"]] = ent
+                else:
+                    # 期间允许自由文本（如 2024Q4 / 2024.01-03）
+                    ent = tk.Entry(row, font=('Arial', 11), width=25,
+                                   relief=tk.SUNKEN, bd=2, justify='center',
+                                   fg='black', bg='white', insertbackground='black')
+                    ent.pack(side=tk.LEFT, padx=6)
                     self.rule_inputs[f["key"]] = ent
 
     def _rule_number_hint(self, event):
@@ -290,10 +303,11 @@ class TaxBenefitApp:
         except Exception as e:
             messagebox.showerror("错误", f"计算过程中发生错误：{e}")
 
-    # ---------- Excel 等价规则检查 ----------
+    # ---------- 规则检查 ----------
     def run_rule_checks(self):
         try:
             A = self.rule_inputs["A_主营行业"].get().strip()
+            # B_期间 不参与数值
             C = self._get_dec("C_营业收入")
             D = self._get_dec("D_销售收入")
             E = self._get_dec("E_成本")
@@ -305,47 +319,142 @@ class TaxBenefitApp:
             K = self._get_dec("K_计提折旧")
             L = self._get_dec("L_当期开票额度")
             M = self._get_dec("M_当期受票额度")
-            N = self._get_dec("N_印花税计税依据")  # 当前 5 条规则未直接用
+            N = self._get_dec("N_印花税计税依据")
+            O = self._get_dec("O_简易计税销售额")
+            P = self._get_dec("P_免税销售额")
+            Q = self._get_dec("Q_进项税额")
+            R = self._get_dec("R_进项税额转出")
+
+            # 颜色分组（需求 5）
+            yellow_keys = {
+                "进一步核实纳税人是否少计印花税计税依据",
+                "工商业纳税人成本费用占比异常",
+                "服务业纳税人成本费用占比异常",
+                "疑似多列工资薪金支出或少扣缴个人所得税",
+                "疑似少转出用于简易计税的进项税额",
+                "疑似少转出用于免税项目的进项税额",
+            }
+
+            def with_severity(msg):
+                return (msg, "yellow" if msg in yellow_keys else "red")
 
             issues = []
 
-            # 1) |D - C| > 100
+            # 指标一）|D - C| > 100
             diff = (D - C)
             if diff > Decimal("100") or diff < Decimal("-100"):
-                issues.append("同期申报的增值税收入与企业所得税收入有差异")
+                issues.append(with_severity("同期申报的增值税收入与企业所得税收入有差异"))
 
-            # 2) 成本/费用占比异常
-            if C > 0 and A in {"批发零售", "制造"}:
+            # 指标二）成本/费用占比异常（区分工商业 vs 服务业）
+            if C > 0:
                 total_ratio = (E + F + G + H) / C
-                if total_ratio >= Decimal("0.70"):
-                    if E / C <= Decimal("0.50"):
-                        issues.append("工商业纳税人成本费用占比异常")
-                    if (F + G + H) / C >= Decimal("0.50"):
-                        issues.append("工商业纳税人费用占比异常")
+                # 工商业口径（批发零售/制造）——沿用你原阈值
+                if A in {"批发零售", "制造"}:
+                    if total_ratio >= Decimal("0.70"):
+                        issues.append(with_severity("工商业纳税人成本费用占比异常"))
+                        # 细化提示（非着色项）
+                        if E / C > Decimal("0.50"):
+                            pass
+                        else:
+                            issues.append(with_severity("工商业纳税人成本费用占比异常"))  # 统一为同一行提示
+                # 服务业口径（生活服务/交通运输等）——示例阈值 60%
+                if A in {"生活服务", "交通运输"}:
+                    if total_ratio >= Decimal("0.60"):
+                        issues.append(with_severity("服务业纳税人成本费用占比异常"))
 
-            # 3) E+F+G+H - I - K - M > 20000
+            # 指标三）疑似未取得合法有效凭证列支：E+F+G+H - I - K - M > 20000
             if (E + F + G + H - I - K - M) > Decimal("20000"):
-                issues.append("疑似未取得合法有效凭证列支")
+                issues.append(with_severity("疑似未取得合法有效凭证列支"))
 
-            # 4) I≥500000 且 I-J≥100000
+            # 指标四）（补充内容保留原逻辑）I≥500000 且 I-J≥100000
             if I >= Decimal("500000") and (I - J) >= Decimal("100000"):
-                issues.append("疑似多列工资薪金支出或少扣缴个人所得税")
+                issues.append(with_severity("疑似多列工资薪金支出或少扣缴个人所得税"))
 
-            # 5) 行业在集合 且 (C+E+F+G - I)≥1,000,000
+            # 指标五）更正：以 N（印花税计税依据）对比经济业务基数
+            # 经济业务基数（示例）：营业收入 + 成本 + 销售/管理/财务费用 - 工资薪金
             base = (C + E + F + G - I)
-            if A in {"批发零售", "制造", "建筑安装", "交通运输", "其他"} and base >= Decimal("1000000"):
-                issues.append("疑似少计印花税计税依据")
+            if base >= Decimal("1000000"):  # 限定一定规模再核实（保留你的尺度）
+                if N < base:
+                    issues.append(with_severity("进一步核实纳税人是否少计印花税计税依据"))
 
-            if issues:
-                msg = "发现以下疑点：\n\n" + "\n".join(f"• {s}" for s in issues)
-                messagebox.showwarning("规则检查结果", msg)
-            else:
-                messagebox.showinfo("规则检查结果", "未发现疑点。")
+            # 指标六）新增：少转出进项税额（简易计税 & 免税）
+            # 期望转出 = Q * (对应销售额 / 总销售额)；总销售额取 max(D, C, L) 以增强容错
+            total_sales_candidates = [D, C, L]
+            total_sales = max(total_sales_candidates) if any(x > 0 for x in total_sales_candidates) else Decimal("0")
+            if Q > 0 and total_sales > 0:
+                expected_simple = (Q * (O / total_sales)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                expected_exempt = (Q * (P / total_sales)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                tolerance = Decimal("0.01")
+
+                # 如果当前“转出”不足以覆盖对应部分，就分别给出两条提示（两栏均有函数）
+                if R + tolerance < expected_simple:
+                    issues.append(with_severity("疑似少转出用于简易计税的进项税额"))
+                if R + tolerance < expected_exempt:
+                    issues.append(with_severity("疑似少转出用于免税项目的进项税额"))
+
+            # 展示结果（按颜色分类）——自定义弹窗实现彩色高亮
+            self._show_issue_window(issues)
 
         except ValueError as e:
             messagebox.showerror("输入错误", f"请检查规则区输入：{e}")
         except Exception as e:
             messagebox.showerror("错误", f"规则检查过程发生异常：{e}")
+
+    def _show_issue_window(self, issues_with_severity):
+        # 自定义结果面板，按需求 5 给不同类型着色
+        win = tk.Toplevel(self.root)
+        win.title("规则检查结果")
+        win.configure(bg='white')
+        win.geometry("720x420+150+150")
+
+        header = tk.Label(win, text="规则检查结果", bg='white', fg='#2c3e50',
+                          font=('Arial', 16, 'bold'))
+        header.pack(pady=(12, 6))
+
+        container = tk.Frame(win, bg='white')
+        container.pack(fill=tk.BOTH, expand=True, padx=16, pady=10)
+
+        canvas = tk.Canvas(container, bg='white', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        list_frame = tk.Frame(canvas, bg='white')
+
+        list_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=list_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        if not issues_with_severity:
+            ok = tk.Label(list_frame, text="未发现疑点。", bg='white', fg='#2e7d32',
+                          font=('Arial', 13, 'bold'))
+            ok.pack(pady=8, anchor="w")
+        else:
+            for msg, sev in issues_with_severity:
+                if sev == "yellow":
+                    bg = "#fffbe6"; fg = "#8b6d00"; border = "#ffe58f"
+                else:
+                    bg = "#ffecec"; fg = "#a8071a"; border = "#ffb3b8"
+
+                row = tk.Frame(list_frame, bg=bg, highlightbackground=border,
+                               highlightcolor=border, highlightthickness=1, bd=0)
+                row.pack(fill=tk.X, pady=6)
+
+                dot = tk.Canvas(row, width=10, height=10, bg=bg, highlightthickness=0)
+                dot.pack(side=tk.LEFT, padx=10, pady=10)
+                dot.create_oval(2, 2, 8, 8, fill=fg, outline=fg)
+
+                lbl = tk.Label(row, text=msg, bg=bg, fg=fg, font=('Arial', 12, 'bold'))
+                lbl.pack(side=tk.LEFT, padx=4, pady=8, anchor="w")
+
+        # 底部关闭
+        close_btn = tk.Button(win, text="关闭", command=win.destroy,
+                              bg='#6c757d', fg='black', activebackground='#5a6268',
+                              activeforeground='white', font=('Arial', 12, 'bold'), width=10)
+        close_btn.pack(pady=(6, 12))
 
     # ---------- 重置/退出 ----------
     def reset_form(self):

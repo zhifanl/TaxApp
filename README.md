@@ -7,4 +7,4 @@ python -m pip install --upgrade pip
 pip install --pre pyinstaller
 pip install -r requirements.txt
 
-pyinstaller --name "TaxApp" --onefile --windowed --icon icon.ico MyApp.py
+pyinstaller --name "TaxApp" --onefile --windowed --icon icon.ico tax_benefit_app.py

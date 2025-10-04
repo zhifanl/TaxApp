@@ -304,6 +304,7 @@ class TaxBenefitApp:
             messagebox.showerror("错误", f"计算过程中发生错误：{e}")
 
     # ---------- 规则检查 ----------
+        # ---------- 规则检查 ----------
     def run_rule_checks(self):
         try:
             A = self.rule_inputs["A_主营行业"].get().strip()
@@ -321,18 +322,17 @@ class TaxBenefitApp:
             M = self._get_dec("M_当期受票额度")
             N = self._get_dec("N_印花税计税依据")
             O = self._get_dec("O_简易计税销售额")
-            P = self._get_dec("P_免税销售额")
+            P = self._get_dec("P_免税销售额")  # 仍读取，但不再触发疑点六
             Q = self._get_dec("Q_进项税额")
             R = self._get_dec("R_进项税额转出")
 
-            # 颜色分组（需求 5）
+            # 黄色分组（按最新口径：去掉“免税项目”的那条）
             yellow_keys = {
                 "进一步核实纳税人是否少计印花税计税依据",
                 "工商业纳税人成本费用占比异常",
                 "服务业纳税人成本费用占比异常",
                 "疑似多列工资薪金支出或少扣缴个人所得税",
                 "疑似少转出用于简易计税的进项税额",
-                "疑似少转出用于免税项目的进项税额",
             }
 
             def with_severity(msg):
@@ -340,59 +340,58 @@ class TaxBenefitApp:
 
             issues = []
 
-            # 指标一）|D - C| > 100
+            # 疑点一）|D - C| > 100
             diff = (D - C)
             if diff > Decimal("100") or diff < Decimal("-100"):
                 issues.append(with_severity("同期申报的增值税收入与企业所得税收入有差异"))
 
-            # 指标二）成本/费用占比异常（区分工商业 vs 服务业）
+            # 疑点二）成本/费用占比异常（细分“成本偏高”“费用偏高”）
             if C > 0:
                 total_ratio = (E + F + G + H) / C
-                # 工商业口径（批发零售/制造）——沿用你原阈值
-                if A in {"批发零售", "制造"}:
-                    if total_ratio >= Decimal("0.70"):
-                        issues.append(with_severity("工商业纳税人成本费用占比异常"))
-                        # 细化提示（非着色项）
-                        if E / C > Decimal("0.50"):
-                            pass
-                        else:
-                            issues.append(with_severity("工商业纳税人成本费用占比异常"))  # 统一为同一行提示
-                # 服务业口径（生活服务/交通运输等）——示例阈值 60%
-                if A in {"生活服务", "交通运输"}:
-                    if total_ratio >= Decimal("0.60"):
-                        issues.append(with_severity("服务业纳税人成本费用占比异常"))
+                fee_ratio = (F + G + H) / C
+                cost_ratio = (E / C) if C > 0 else Decimal("0")
 
-            # 指标三）疑似未取得合法有效凭证列支：E+F+G+H - I - K - M > 20000
+                # 工商业口径
+                if A in {"批发零售", "制造"} and total_ratio >= Decimal("0.70"):
+                    issues.append(with_severity("工商业纳税人成本费用占比异常"))
+                    if cost_ratio > Decimal("0.50"):
+                        issues.append(with_severity("成本偏高"))
+                    if fee_ratio >= Decimal("0.50"):
+                        issues.append(with_severity("费用偏高"))
+
+                # 服务业口径（生活服务、交通运输）
+                if A in {"生活服务", "交通运输"} and total_ratio >= Decimal("0.60"):
+                    issues.append(with_severity("服务业纳税人成本费用占比异常"))
+                    # 子项阈值沿用 50%/50%（如你有正式口径可再改）
+                    if cost_ratio > Decimal("0.50"):
+                        issues.append(with_severity("成本偏高"))
+                    if fee_ratio >= Decimal("0.50"):
+                        issues.append(with_severity("费用偏高"))
+
+            # 疑点三）疑似未取得合法有效凭证列支：E+F+G+H - I - K - M > 20000
             if (E + F + G + H - I - K - M) > Decimal("20000"):
                 issues.append(with_severity("疑似未取得合法有效凭证列支"))
 
-            # 指标四）（补充内容保留原逻辑）I≥500000 且 I-J≥100000
+            # 疑点四）I≥500000 且 I-J≥100000
             if I >= Decimal("500000") and (I - J) >= Decimal("100000"):
                 issues.append(with_severity("疑似多列工资薪金支出或少扣缴个人所得税"))
 
-            # 指标五）更正：以 N（印花税计税依据）对比经济业务基数
-            # 经济业务基数（示例）：营业收入 + 成本 + 销售/管理/财务费用 - 工资薪金
+            # 疑点五）印花税计税依据核实
             base = (C + E + F + G - I)
-            if base >= Decimal("1000000"):  # 限定一定规模再核实（保留你的尺度）
-                if N < base:
-                    issues.append(with_severity("进一步核实纳税人是否少计印花税计税依据"))
+            if base >= Decimal("1000000") and N < base:
+                issues.append(with_severity("进一步核实纳税人是否少计印花税计税依据"))
 
-            # 指标六）新增：少转出进项税额（简易计税 & 免税）
-            # 期望转出 = Q * (对应销售额 / 总销售额)；总销售额取 max(D, C, L) 以增强容错
+            # 疑点六）仅保留：少转出用于简易计税项目的进项税额
+            # 期望简易转出 = Q * (O / 总销售额)；总销售额取 max(D, C, L)
             total_sales_candidates = [D, C, L]
             total_sales = max(total_sales_candidates) if any(x > 0 for x in total_sales_candidates) else Decimal("0")
             if Q > 0 and total_sales > 0:
                 expected_simple = (Q * (O / total_sales)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                expected_exempt = (Q * (P / total_sales)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 tolerance = Decimal("0.01")
-
-                # 如果当前“转出”不足以覆盖对应部分，就分别给出两条提示（两栏均有函数）
                 if R + tolerance < expected_simple:
                     issues.append(with_severity("疑似少转出用于简易计税的进项税额"))
-                if R + tolerance < expected_exempt:
-                    issues.append(with_severity("疑似少转出用于免税项目的进项税额"))
 
-            # 展示结果（按颜色分类）——自定义弹窗实现彩色高亮
+            # 展示结果
             self._show_issue_window(issues)
 
         except ValueError as e:

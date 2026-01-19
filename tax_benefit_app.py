@@ -5,6 +5,85 @@ import sys
 from tkinter import filedialog
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tipwindow = None
+        widget.bind("<Enter>", self.show_tip)
+        widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tipwindow or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + 20
+        self.tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+
+        label = tk.Label(
+            tw,
+            text=self.text,
+            justify='left',
+            background="#ffffe0",
+            relief='solid',
+            fg="black",                 # ← 关键：强制黑字
+            borderwidth=1,
+            font=("Arial", 10),
+            wraplength=420
+        )
+        label.pack(ipadx=6, ipady=4)
+
+    def hide_tip(self, event=None):
+        if self.tipwindow:
+            self.tipwindow.destroy()
+            self.tipwindow = None
+
+
+# ====================== 新增：疑点 → 指引映射 ======================
+ISSUE_GUIDE_MAP = {
+    "同期申报的增值税收入与企业所得税收入有差异": [
+        "1. 是否由于两税确认收入时间不一致。",
+        "2. 是否由于两税确认收入口径不一致导致。",
+        "3. 结合合同签订情况、项目进度、银行流水时间进行综合判断。"
+    ],
+    "工商业纳税人成本费用占比异常": [
+        "1. 检查代发人员工资是否真实到账（银行流水）。",
+        "2. 实地核查库存，固定资产进行自查清点。",
+        "3. 核查运输发票、出货清单等辅助材料。"
+    ],
+    "费用偏高": [
+        "1. 核实费用是否真实发生。",
+        "2. 检查费用对应的合同、发票及银行流水。",
+        "3. 判断是否存在个人消费或虚列费用情形。"
+    ],
+    "疑似未取得合法有效凭证列支": [
+        "1. 是否属于以下八类可税前扣除情形：",
+        "   - 境外费用形式发票",
+        "   - 差旅包干内部凭证",
+        "   - 政府收费财政票据",
+        "   - 政府应税收款凭证",
+        "   - 水电费分割扣除",
+        "   - 上年库存本年结转",
+        "   - 暂估入库跨期票据",
+        "2. 除上述情形外，相关支出不得税前扣除。",
+        "3. 通过银行流水、合同、物流资料进行交叉核实。"
+    ],
+    "疑似多列工资薪金支出或少扣缴个人所得税": [
+        "1. 是否存在多列工资支出、少缴个人所得税情形。",
+        "2. 要求提供劳动合同、工资支付记录。",
+        "3. 核对员工花名册，并进行人员访谈。"
+    ],
+    "进一步核实纳税人是否少计印花税计税依据": [
+        "1. 向上游单位发函，开展异地协查。",
+        "2. 查阅合同、发票及银行流水，约谈企业进行核实。"
+    ],
+    "疑似少转出用于简易计税的进项税额": [
+        "1. 查找抵扣进项发票，是否存在“房屋出租”“物业服务”等同时用于应税/免税项目。",
+        "2. 核查是否存在免税货物销售但未转出进项税额情形。"
+    ]
+}
 
 class TaxBenefitApp:
 
@@ -53,6 +132,176 @@ class TaxBenefitApp:
         self.root.lift()
         self.root.attributes('-topmost', True)
         self.root.after_idle(self.root.attributes, '-topmost', False)
+        
+    def _get_tooltip_from_guide(self, msg: str):
+        """
+        If issue exists in ISSUE_GUIDE_MAP,
+        return formatted multiline tooltip text.
+        """
+        if msg not in ISSUE_GUIDE_MAP:
+            return None
+
+        lines = ISSUE_GUIDE_MAP[msg]
+        return "\n".join(lines)
+
+        
+    # ====================== 修改：规则结果窗口（新增按钮） ======================
+    def _show_issue_window(self, issues_with_severity):
+        win = tk.Toplevel(self.root)
+        win.title("规则检查结果")
+        win.configure(bg='white')
+        win.geometry("760x450+150+150")
+
+        header = tk.Label(
+            win, text="规则检查结果",
+            bg='white', fg='#2c3e50',
+            font=('Arial', 16, 'bold')
+        )
+        header.pack(pady=(12, 6))
+
+        container = tk.Frame(win, bg='white')
+        container.pack(fill=tk.BOTH, expand=True, padx=16, pady=10)
+
+        canvas = tk.Canvas(container, bg='white', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        list_frame = tk.Frame(canvas, bg='white')
+
+        list_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=list_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        if not issues_with_severity:
+            tk.Label(
+                list_frame,
+                text="未发现疑点。",
+                bg='white',
+                fg='#2e7d32',
+                font=('Arial', 13, 'bold')
+            ).pack(pady=8, anchor="w")
+        else:
+            for msg, sev in issues_with_severity:
+                if sev == "yellow":
+                    bg, fg, border = "#fffbe6", "#8b6d00", "#ffe58f"
+                else:
+                    bg, fg, border = "#ffecec", "#a8071a", "#ffb3b8"
+
+                row = tk.Frame(
+                    list_frame, bg=bg,
+                    highlightbackground=border,
+                    highlightthickness=1
+                )
+                row.pack(fill=tk.X, pady=6)
+
+                # ====== FIX: 支持“提示：”的显示与 tooltip ======
+
+                display_msg = msg
+                tooltip_text = None
+
+                if "提示：" in msg:
+                    display_msg, tooltip_text = msg.split("提示：", 1)
+                    display_msg = display_msg.strip()
+                    tooltip_text = tooltip_text.strip()
+
+                display_msg = msg  # no parsing anymore
+
+                label = tk.Label(
+                    row,
+                    text=display_msg,
+                    bg=bg,
+                    fg=fg,
+                    font=('Arial', 12, 'bold'),
+                    wraplength=520,
+                    justify='left'
+                )
+                label.pack(side=tk.LEFT, padx=10, pady=8)
+
+                # ===== Tooltip from ISSUE_GUIDE_MAP =====
+                tooltip_text = self._get_tooltip_from_guide(display_msg)
+                if tooltip_text:
+                    ToolTip(label, tooltip_text)
+
+                # lbl = tk.Label(
+                #     row,
+                #     text=display_msg,
+                #     bg=bg,
+                #     fg=fg,
+                #     font=('Arial', 12, 'bold'),
+                #     wraplength=520,
+                #     justify='left',
+                #     anchor='w'
+                # )
+                # lbl.pack(side=tk.LEFT, padx=(10, 4), pady=8)
+
+
+
+                # ===== 新增：处置指引按钮 =====
+                if msg in ISSUE_GUIDE_MAP:
+                    tk.Button(
+                        row,
+                        text="处置指引",
+                        font=('Arial', 10, 'bold'),
+                        bg='#1890ff',
+                        fg='black',
+                        cursor='hand2',
+                        command=lambda m=msg: self._show_guide_window(m)
+                    ).pack(side=tk.RIGHT, padx=10)
+
+        tk.Button(
+            win, text="关闭",
+            command=win.destroy,
+            bg='#6c757d', fg='black',
+            font=('Arial', 12, 'bold'),
+            width=10
+        ).pack(pady=(6, 12))
+
+    # ====================== 新增：指引弹窗 ======================
+    def _show_guide_window(self, issue_msg):
+        win = tk.Toplevel(self.root)
+        win.title("疑点处置指引")
+        win.geometry("620x380+200+200")
+        win.configure(bg='white')
+
+        tk.Label(
+            win,
+            text=f"疑点：{issue_msg}",
+            bg='white',
+            fg='#2c3e50',
+            font=('Arial', 14, 'bold'),
+            wraplength=580,
+            justify='left'
+        ).pack(pady=12, padx=16, anchor='w')
+
+        frame = tk.Frame(win, bg='white')
+        frame.pack(fill=tk.BOTH, expand=True, padx=20)
+
+        for line in ISSUE_GUIDE_MAP.get(issue_msg, []):
+            tk.Label(
+                frame,
+                text=line,
+                bg='white',
+                fg='#444',
+                font=('Arial', 11),
+                anchor='w',
+                justify='left',
+                wraplength=560
+            ).pack(anchor='w', pady=4)
+
+        tk.Button(
+            win,
+            text="关闭",
+            command=win.destroy,
+            bg='#6c757d',
+            fg='black',
+            font=('Arial', 11, 'bold'),
+            width=10
+        ).pack(pady=12)
 
     def create_widgets(self):
         """创建所有界面组件（标题、企业信息、规则区、表格区）"""
@@ -93,7 +342,7 @@ class TaxBenefitApp:
 
     # ---------- 疑点规则输入 ----------
     def create_rules_section(self):
-        block = tk.LabelFrame(self.main_frame, text="疑点规则检查（Excel 同款）",
+        block = tk.LabelFrame(self.main_frame, text="疑点规则检查",
                               bg='white', fg='#2c3e50', font=('Arial', 12, 'bold'))
         block.pack(fill=tk.X, padx=5, pady=10)
 
@@ -343,7 +592,9 @@ class TaxBenefitApp:
             # 疑点一）|D - C| > 100
             diff = (D - C)
             if diff > Decimal("100") or diff < Decimal("-100"):
-                issues.append(with_severity("同期申报的增值税收入与企业所得税收入有差异"))
+                issues.append(with_severity(
+    "同期申报的增值税收入与企业所得税收入有差异"
+))
 
             # 疑点二）成本/费用占比异常（细分“成本偏高”“费用偏高”）
             if C > 0:
@@ -357,7 +608,10 @@ class TaxBenefitApp:
                     if cost_ratio > Decimal("0.50"):
                         issues.append(with_severity("成本偏高"))
                     if fee_ratio >= Decimal("0.50"):
-                        issues.append(with_severity("费用偏高"))
+                        issues.append(with_severity(
+    "费用偏高"
+))
+
 
                 # 服务业口径（生活服务、交通运输）
                 if A in {"生活服务", "交通运输"} and total_ratio >= Decimal("0.60"):
@@ -370,7 +624,9 @@ class TaxBenefitApp:
 
             # 疑点三）疑似未取得合法有效凭证列支：E+F+G+H - I - K - M > 20000
             if (E + F + G + H - I - K - M) > Decimal("20000"):
-                issues.append(with_severity("疑似未取得合法有效凭证列支"))
+                issues.append(with_severity(
+    "疑似未取得合法有效凭证列支"
+))
 
             # 疑点四）I≥500000 且 I-J≥100000
             if I >= Decimal("500000") and (I - J) >= Decimal("100000"):
@@ -399,62 +655,7 @@ class TaxBenefitApp:
         except Exception as e:
             messagebox.showerror("错误", f"规则检查过程发生异常：{e}")
 
-    def _show_issue_window(self, issues_with_severity):
-        # 自定义结果面板，按需求 5 给不同类型着色
-        win = tk.Toplevel(self.root)
-        win.title("规则检查结果")
-        win.configure(bg='white')
-        win.geometry("720x420+150+150")
-
-        header = tk.Label(win, text="规则检查结果", bg='white', fg='#2c3e50',
-                          font=('Arial', 16, 'bold'))
-        header.pack(pady=(12, 6))
-
-        container = tk.Frame(win, bg='white')
-        container.pack(fill=tk.BOTH, expand=True, padx=16, pady=10)
-
-        canvas = tk.Canvas(container, bg='white', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
-        list_frame = tk.Frame(canvas, bg='white')
-
-        list_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        canvas.create_window((0, 0), window=list_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        if not issues_with_severity:
-            ok = tk.Label(list_frame, text="未发现疑点。", bg='white', fg='#2e7d32',
-                          font=('Arial', 13, 'bold'))
-            ok.pack(pady=8, anchor="w")
-        else:
-            for msg, sev in issues_with_severity:
-                if sev == "yellow":
-                    bg = "#fffbe6"; fg = "#8b6d00"; border = "#ffe58f"
-                else:
-                    bg = "#ffecec"; fg = "#a8071a"; border = "#ffb3b8"
-
-                row = tk.Frame(list_frame, bg=bg, highlightbackground=border,
-                               highlightcolor=border, highlightthickness=1, bd=0)
-                row.pack(fill=tk.X, pady=6)
-
-                dot = tk.Canvas(row, width=10, height=10, bg=bg, highlightthickness=0)
-                dot.pack(side=tk.LEFT, padx=10, pady=10)
-                dot.create_oval(2, 2, 8, 8, fill=fg, outline=fg)
-
-                lbl = tk.Label(row, text=msg, bg=bg, fg=fg, font=('Arial', 12, 'bold'))
-                lbl.pack(side=tk.LEFT, padx=4, pady=8, anchor="w")
-
-        # 底部关闭
-        close_btn = tk.Button(win, text="关闭", command=win.destroy,
-                              bg='#6c757d', fg='black', activebackground='#5a6268',
-                              activeforeground='white', font=('Arial', 12, 'bold'), width=10)
-        close_btn.pack(pady=(6, 12))
-
+    
     # ---------- 重置/退出 ----------
     def reset_form(self):
         if messagebox.askyesno("确认重置", "确定要清空所有输入吗？"):

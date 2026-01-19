@@ -1,5 +1,5 @@
 # TaxApp
-python3 MyApp.py
+python3 tax_benefit_app.py
 
 python3 -m venv venv
 source venv/bin/activate

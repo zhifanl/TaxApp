@@ -90,7 +90,7 @@ class TaxBenefitApp:
     def __init__(self, root):
         """初始化应用程序"""
         self.root = root
-        self.root.title("注销风险监测器")
+        self.root.title("生产经营合规检测器")
 
         # 窗口大小
         if sys.platform == "darwin":  # macOS
@@ -315,7 +315,6 @@ class TaxBenefitApp:
         separator_frame = tk.Frame(self.main_frame, height=2, bg='#bdc3c7')
         separator_frame.pack(fill=tk.X, pady=20)
 
-        self.create_tax_items_section()
 
     # ---------- 顶部企业信息 ----------
     def create_header_section(self):

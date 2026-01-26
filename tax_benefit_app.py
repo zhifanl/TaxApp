@@ -305,7 +305,7 @@ class TaxBenefitApp:
 
     def create_widgets(self):
         """创建所有界面组件（标题、企业信息、规则区、表格区）"""
-        title_label = tk.Label(self.main_frame, text="注销风险监测器",
+        title_label = tk.Label(self.main_frame, text="生产经营合规检测器",
                                font=('Arial', 18, 'bold'), bg='white', fg='#2c3e50')
         title_label.pack(pady=(0, 20))
 
